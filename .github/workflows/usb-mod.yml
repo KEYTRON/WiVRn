@@ -1,0 +1,71 @@
+name: WiVRn USB mod APK
+
+on:
+  push:
+    branches: [usb-sticky]
+  workflow_dispatch:
+
+jobs:
+  android:
+    name: Android (WiVRn USB)
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - uses: actions/cache@v5
+      with:
+        key: cmake-android-usb
+        path: |
+          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.tar.*
+          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.zip
+          ${{github.workspace}}/cmake-fetch/*.tar.*
+          ${{github.workspace}}/cmake-fetch/*.zip
+          ${{github.workspace}}/cmake-fetch/*.tgz
+
+    - uses: actions/cache@v5
+      with:
+        key: gradle-android-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'build.gradle') }}
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update && sudo apt-get install glslang-tools spirv-tools librsvg2-bin gettext
+        wget https://github.com/KhronosGroup/KTX-Software/releases/download/v4.3.2/KTX-Software-4.3.2-Linux-x86_64.deb
+        sudo dpkg --install KTX-Software-4.3.2-Linux-x86_64.deb
+        npm install --global @gltf-transform/cli
+
+    - name: Signing key
+      env:
+        APK_SIGNINGKEYPASSWORD: ${{ secrets.APK_SIGNINGKEYPASSWORD }}
+        APK_KEYSTORE_BASE64: ${{ secrets.APK_KEYSTORE_BASE64 }}
+      run: |
+        echo signingKeyPassword="$APK_SIGNINGKEYPASSWORD" > gradle.properties
+        echo "$APK_KEYSTORE_BASE64" | base64 --decode --ignore-garbage > ks.keystore
+
+    - name: Build
+      run: |
+        chmod +x gradlew
+        ./gradlew \
+          -Pwivrn_version=26.9-usb \
+          -Pwivrn_versionCode=1 \
+          -Psuffix=.usb \
+          -Pwivrn_css=images/wivrn-release.css \
+          -Pwivrn_app_name="WiVRn USB" \
+          -Pwivrn_compress_glb=ON \
+          -Pfetchcontent_base_dir=${{github.workspace}}/cmake-fetch \
+          assembleRelease
+
+    - name: Collect APK
+      run: |
+        mkdir apk
+        mv $(find build/outputs/apk/ -name "*.apk") apk/
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: wivrn-usb-apk
+        path: apk/*.apk
+        retention-days: 30

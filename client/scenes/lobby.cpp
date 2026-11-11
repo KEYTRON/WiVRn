@@ -72,6 +72,12 @@ using namespace std::chrono_literals;
 
 static bool force_autoconnect = false;
 
+// Sticky intent: when the client was started with a wivrn:// or wivrn+tcp://
+// URI (e.g. "wivrn+tcp://localhost" over adb reverse), keep reconnecting to
+// that same server after the session drops (headset sleep, focus loss),
+// instead of falling back to a server discovered over Wi-Fi.
+static std::optional<wivrn_discover::service> sticky_intent;
+
 scenes::lobby::~lobby()
 {
 	if (renderer)
@@ -884,6 +890,13 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 			spdlog::error("Error connecting to server: {}", e.what());
 			async_session.cancel();
 			async_error = e.what();
+			if (sticky_intent)
+			{
+				// Cable unplugged or adb reverse gone: fall back to normal autoconnect
+				spdlog::info("Dropping sticky intent server {}", sticky_intent->hostname);
+				sticky_intent.reset();
+				autoconnect_enabled = true;
+			}
 		}
 	}
 
@@ -913,10 +926,20 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 	{
 		if (auto intent = application::get_intent())
 		{
+			sticky_intent = *intent;
 			pin_request.lock()->pin = intent->pin;
 			connect(configuration::server_data{
 			        .manual = true,
 			        .service = *intent,
+			});
+		}
+		else if (sticky_intent and autoconnect_enabled)
+		{
+			autoconnect_enabled = false;
+			spdlog::info("Reconnecting to sticky intent server {}", sticky_intent->hostname);
+			connect(configuration::server_data{
+			        .manual = true,
+			        .service = *sticky_intent,
 			});
 		}
 		else
